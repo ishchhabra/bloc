@@ -178,17 +178,54 @@ abstract class Bloc<Event, State> extends BlocBase<State>
   void on<E extends Event>(
     EventHandler<E, State> handler, {
     EventTransformer<E>? transformer,
+  }) =>
+      on2<E, State>(handler);
+
+  /// Register event handler for an event of type `E`.
+  /// There should only ever be one event handler per event type `E`.
+  ///
+  /// ```dart
+  /// abstract class CounterEvent {}
+  /// class CounterIncrementPressed extends CounterEvent {}
+  ///
+  /// class CounterBloc extends Bloc<CounterEvent, int> {
+  ///   CounterBloc() : super(0) {
+  ///     on<CounterIncrementPressed>((event, emit) => emit(state + 1));
+  ///   }
+  /// }
+  /// ```
+  ///
+  /// * A [StateError] will be thrown if there are multiple event handlers
+  /// registered for the same type `E`.
+  ///
+  /// By default, events will be processed concurrently.
+  ///
+  /// See also:
+  ///
+  /// * [EventTransformer] to customize how events are processed.
+  /// * [package:bloc_concurrency](https://pub.dev/packages/bloc_concurrency) for an
+  /// opinionated set of event transformers.
+  ///
+  void on2<E extends Event, FromState extends State>(
+    EventHandler<E, State> handler, {
+    EventTransformer<E>? transformer,
   }) {
     // ignore: prefer_asserts_with_message
     assert(() {
-      final handlerExists = _handlers.any((handler) => handler.type == E);
+      final handlerExists = _handlers.any(
+        (handler) =>
+            handler.event == E && handler.fromState == State ||
+            handler.fromState == FromState,
+      );
       if (handlerExists) {
         throw StateError(
           'on<$E> was called multiple times. '
           'There should only be a single event handler per event type.',
         );
       }
-      _handlers.add(_Handler(isType: (dynamic e) => e is E, type: E));
+      _handlers.add(
+        _Handler(isType: (dynamic e) => e is E, event: E, fromState: FromState),
+      );
       return true;
     }());
 
@@ -223,6 +260,17 @@ abstract class Bloc<Event, State> extends BlocBase<State>
 
           try {
             _emitters.add(emitter);
+
+            // ignore: prefer_asserts_with_message
+            assert(() {
+              if (state is! FromState) {
+                throw StateError(
+                  'on<$E, $FromState> was called with a state of type'
+                  ' ${state.runtimeType}.',
+                );
+              }
+              return true;
+            }());
             await handler(event as E, emitter);
           } catch (error, stackTrace) {
             onError(error, stackTrace);
@@ -288,9 +336,14 @@ abstract class Bloc<Event, State> extends BlocBase<State>
 }
 
 class _Handler {
-  const _Handler({required this.isType, required this.type});
+  const _Handler({
+    required this.isType,
+    required this.event,
+    required this.fromState,
+  });
   final bool Function(dynamic value) isType;
-  final Type type;
+  final Type event;
+  final Type? fromState;
 }
 
 class _DefaultBlocObserver extends BlocObserver {
